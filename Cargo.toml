@@ -1,0 +1,23 @@
+[package]
+name = "bnd_ware_rust"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sdl2 = { version = "0.35", features = ["image", "ttf"] }
+mlua = { version = "0.9", features = ["lua54", "vendored"] }
+zip = "0.6"
+directories = "5.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+eframe = "0.24"
+winapi = { version = "0.3.9", features = ["winuser", "windef"] }
+rand = "0.8"
+
+[[bin]]
+name = "bnd_game"
+path = "src/main.rs"
+
+[[bin]]
+name = "bnd_mod_manager"
+path = "src/mod_manager.rs"
