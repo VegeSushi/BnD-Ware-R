@@ -219,9 +219,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Loading Screens
     draw_loading_screen(&mut canvas, &texture_creator, &font, 1)?;
-    std::thread::sleep(Duration::from_millis(300));
+    wait_ms(&mut event_pump, 300);
     draw_loading_screen(&mut canvas, &texture_creator, &font, 2)?;
-    std::thread::sleep(Duration::from_millis(300));
+    wait_ms(&mut event_pump, 300);
 
     let lua = Lua::new();
     let state = Rc::new(RefCell::new(EngineState {
@@ -233,7 +233,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     register_lua_hooks(&lua, state.clone())?;
 
     draw_loading_screen(&mut canvas, &texture_creator, &font, 3)?;
-    std::thread::sleep(Duration::from_millis(500));
+    wait_ms(&mut event_pump, 500);
 
     // Logo Animation Loop
     for i in 0..=59 {
@@ -243,7 +243,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             canvas.clear();
             canvas.copy(&texture, None, None)?;
             canvas.present();
-            std::thread::sleep(Duration::from_millis(16)); // ~60fps instead of 1ms to actually see it
+            wait_ms(&mut event_pump, 16); // ~60fps instead of 1ms to actually see it
         }
     }
 
@@ -370,7 +370,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         canvas.clear();
                         draw_native_text(&mut canvas, &texture_creator, &font, "LUA ERROR", 10, 10)?;
                         canvas.present();
-                        std::thread::sleep(Duration::from_millis(5000));
+                        wait_ms(&mut event_pump, 5000);
                         break 'minigame_loop;
                     }
                 }
@@ -417,7 +417,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let score_text = format!("Game Score: {}\nTotal Score: {}", score, g_total_score);
                 draw_native_text(&mut canvas, &texture_creator, &font, &score_text, 20, 20)?;
                 canvas.present();
-                std::thread::sleep(Duration::from_millis(2500));
+                wait_ms(&mut event_pump, 2500);
             }
         }
 
@@ -429,7 +429,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let final_text = format!("Final Score: {}", g_total_score);
         draw_native_text(&mut canvas, &texture_creator, &font, &final_text, 20, 20)?;
         canvas.present();
-        std::thread::sleep(Duration::from_millis(5000));
+        wait_ms(&mut event_pump, 5000);
     }
 
     Ok(())
@@ -438,6 +438,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 // ---------------------------------------------------------
 // Helper Functions for Engine UI
 // ---------------------------------------------------------
+
+/// Sleeps for roughly `ms` milliseconds while still pumping the SDL event
+/// queue, so Windows doesn't consider the window "not responding" during
+/// splash screens / score screens (a plain std::thread::sleep blocks the
+/// whole thread and starves the message pump for the entire duration).
+/// Also lets the user close the window (Alt+F4 / the X button) instantly
+/// even in the middle of one of these waits, instead of it queuing up
+/// until the sleep finally ends.
+fn wait_ms(event_pump: &mut sdl2::EventPump, ms: u64) {
+    let deadline = Instant::now() + Duration::from_millis(ms);
+    loop {
+        for event in event_pump.poll_iter() {
+            if let Event::Quit { .. } = event {
+                std::process::exit(0);
+            }
+        }
+        if Instant::now() >= deadline {
+            break;
+        }
+        // Small slices keep us pumping events roughly every 4ms instead of
+        // blocking for the whole remaining duration in one shot.
+        std::thread::sleep(Duration::from_millis(4).min(deadline.saturating_duration_since(Instant::now())));
+    }
+}
 
 fn draw_loading_screen(
     canvas: &mut sdl2::render::Canvas<sdl2::video::Window>,
