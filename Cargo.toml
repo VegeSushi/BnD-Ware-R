@@ -4,15 +4,25 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-sdl2 = { version = "0.35", features = ["image", "ttf"] }
+# "bundled" + "static-link" make SDL2 compile from source and link statically,
+# so `cargo build` works on a clean machine without SDL2 dev libraries/DLLs
+# already installed. Requires cmake to be available on the build machine.
+sdl2 = { version = "0.35", features = ["image", "ttf", "bundled", "static-link"] }
 mlua = { version = "0.9", features = ["lua54", "vendored"] }
+# Used at runtime to extract core.bnd (into a "core" folder) and enabled
+# mod .bnd files (into a temp folder) - both are just zip archives.
 zip = "0.6"
 directories = "5.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 eframe = "0.24"
-winapi = { version = "0.3.9", features = ["winuser", "windef"] }
 rand = "0.8"
+# Not used directly by our code, but required: eframe 0.24.1's Windows
+# app-icon support (native/app_icon.rs) uses winapi::um::winuser and
+# winapi::shared::windef without enabling those features on its own
+# winapi dependency. Declaring them here ourselves enables them for the
+# whole build via Cargo's feature unification, which is what fixes it.
+winapi = { version = "0.3.9", features = ["winuser", "windef"] }
 
 [[bin]]
 name = "bnd_game"
@@ -21,3 +31,6 @@ path = "src/main.rs"
 [[bin]]
 name = "bnd_mod_manager"
 path = "src/mod_manager.rs"
+
+[profile.release]
+panic = "unwind"

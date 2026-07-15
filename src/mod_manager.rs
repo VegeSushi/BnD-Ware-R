@@ -1,52 +1,112 @@
+// Hide the console window when running the release build on Windows,
+// since this is a windowed egui app, not a console app.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use directories::UserDirs;
 use eframe::egui;
-use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
-
-#[derive(Serialize, Deserialize, Default)]
-struct ModConfig {
-    enabled_mods: HashSet<String>,
-}
+use std::process::Command;
 
 struct ModManagerApp {
-    mod_dir: PathBuf,
+    mods_dir: PathBuf,
+    config_path: PathBuf,
     available_mods: Vec<String>,
-    config: ModConfig,
+    enabled_mods: HashSet<String>,
+    status: Option<String>,
 }
 
 impl ModManagerApp {
     fn new() -> Self {
-        let user_dirs = UserDirs::new().unwrap();
-        let mod_dir = user_dirs.home_dir().join("BnD").join("Mods");
-        
-        if !mod_dir.exists() {
-            fs::create_dir_all(&mod_dir).unwrap();
+        let user_dirs = UserDirs::new().expect("could not determine the user's home directory");
+        let bnd_home = user_dirs.home_dir().join("BnD");
+        let mods_dir = bnd_home.join("Mods");
+        let config_dir = bnd_home.join("config");
+        let config_path = config_dir.join("selected_mods.json");
+
+        if !mods_dir.exists() {
+            fs::create_dir_all(&mods_dir).unwrap();
+        }
+        if !config_dir.exists() {
+            fs::create_dir_all(&config_dir).unwrap();
         }
 
         let mut available_mods = Vec::new();
-        if let Ok(entries) = fs::read_dir(&mod_dir) {
+        if let Ok(entries) = fs::read_dir(&mods_dir) {
             for entry in entries.flatten() {
                 if entry.path().extension().and_then(|e| e.to_str()) == Some("bnd") {
-                    available_mods.push(entry.file_name().into_string().unwrap());
+                    if let Ok(name) = entry.file_name().into_string() {
+                        available_mods.push(name);
+                    }
                 }
             }
         }
+        available_mods.sort();
 
-        let config_path = mod_dir.join("mod_config.json");
-        let config: ModConfig = fs::read_to_string(&config_path)
+        // selected_mods.json is a plain JSON array of enabled filenames,
+        // e.g. ["cool_mod.bnd", "other_mod.bnd"] - this is also exactly
+        // the format bnd_game.exe reads at startup when launched with
+        // --modded, so save/load here must stay in lockstep with it.
+        let enabled_mods: HashSet<String> = fs::read_to_string(&config_path)
             .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
+            .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+            .map(|v| v.into_iter().collect())
             .unwrap_or_default();
 
-        Self { mod_dir, available_mods, config }
+        Self {
+            mods_dir,
+            config_path,
+            available_mods,
+            enabled_mods,
+            status: None,
+        }
     }
 
-    fn save_config(&self) {
-        let config_path = self.mod_dir.join("mod_config.json");
-        if let Ok(json) = serde_json::to_string_pretty(&self.config.enabled_mods) {
-            let _ = fs::write(config_path, json);
+    fn save_config(&mut self) {
+        let list: Vec<&String> = self.enabled_mods.iter().collect();
+        match serde_json::to_string_pretty(&list) {
+            Ok(json) => {
+                if let Err(e) = fs::write(&self.config_path, json) {
+                    self.status = Some(format!("Failed to save config: {}", e));
+                }
+            }
+            Err(e) => {
+                self.status = Some(format!("Failed to serialize config: {}", e));
+            }
+        }
+    }
+
+    /// Saves the current selection, then launches bnd_game.exe (expected
+    /// to sit right next to this exe, same as the installer lays them
+    /// out) with --modded so it picks up the enabled mods.
+    fn play_game(&mut self) {
+        self.save_config();
+
+        let exe_dir = match std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())) {
+            Some(dir) => dir,
+            None => {
+                self.status = Some("Could not determine mod manager's own directory.".to_string());
+                return;
+            }
+        };
+
+        let game_exe = if cfg!(windows) {
+            exe_dir.join("bnd_game.exe")
+        } else {
+            exe_dir.join("bnd_game")
+        };
+
+        if !game_exe.exists() {
+            self.status = Some(format!("Game executable not found at {}", game_exe.display()));
+            return;
+        }
+
+        match Command::new(&game_exe).arg("--modded").spawn() {
+            Ok(_) => std::process::exit(0),
+            Err(e) => {
+                self.status = Some(format!("Failed to launch game: {}", e));
+            }
         }
     }
 }
@@ -59,36 +119,38 @@ impl eframe::App for ModManagerApp {
 
             if self.available_mods.is_empty() {
                 ui.label("No mods found. Place .bnd files in:");
-                ui.monospace(self.mod_dir.display().to_string());
+                ui.monospace(self.mods_dir.display().to_string());
             }
-
-            let mut config_changed = false;
 
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for mod_file in &self.available_mods {
-                    let mut is_enabled = self.config.enabled_mods.contains(mod_file);
-                    
+                    let mut is_enabled = self.enabled_mods.contains(mod_file);
                     if ui.checkbox(&mut is_enabled, mod_file).changed() {
-                        config_changed = true;
                         if is_enabled {
-                            self.config.enabled_mods.insert(mod_file.clone());
+                            self.enabled_mods.insert(mod_file.clone());
                         } else {
-                            self.config.enabled_mods.remove(mod_file);
+                            self.enabled_mods.remove(mod_file);
                         }
                     }
                 }
             });
 
-            if config_changed {
-                self.save_config();
+            if let Some(status) = &self.status {
+                ui.separator();
+                ui.colored_label(egui::Color32::LIGHT_RED, status);
             }
 
             ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
                 ui.add_space(10.0);
-                if ui.button("Save & Exit").clicked() {
-                    self.save_config();
-                    std::process::exit(0);
-                }
+                ui.horizontal(|ui| {
+                    if ui.button("Save & Exit").clicked() {
+                        self.save_config();
+                        std::process::exit(0);
+                    }
+                    if ui.button("Play Game").clicked() {
+                        self.play_game();
+                    }
+                });
             });
         });
     }
@@ -96,7 +158,7 @@ impl eframe::App for ModManagerApp {
 
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
-        initial_window_size: Some(egui::vec2(400.0, 300.0)),
+        viewport: egui::ViewportBuilder::default().with_inner_size([400.0, 300.0]),
         ..Default::default()
     };
     eframe::run_native(
