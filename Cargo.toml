@@ -7,7 +7,18 @@ edition = "2021"
 # "bundled" + "static-link" make SDL2 compile from source and link statically,
 # so `cargo build` works on a clean machine without SDL2 dev libraries/DLLs
 # already installed. Requires cmake to be available on the build machine.
-sdl2 = { version = "0.35", features = ["image", "ttf", "bundled", "static-link"] }
+#
+# NOTE: we intentionally do NOT enable SDL2's "image"/"ttf" features anymore.
+# Those bind to the separate SDL2_image/SDL2_ttf C libraries, which are not
+# source-bundled by this crate and require prebuilt .lib/.dll files to link.
+# Instead we decode images and rasterize fonts in pure Rust (see `image` and
+# `fontdue` below), so the whole build stays `cargo build`-only, no external
+# native libs beyond core SDL2.
+sdl2 = { version = "0.35", features = ["bundled", "static-link"] }
+# Pure-Rust image decoding (replaces sdl2::image / SDL2_image).
+image = "0.24"
+# Pure-Rust font rasterization (replaces sdl2::ttf / SDL2_ttf).
+fontdue = "0.8"
 mlua = { version = "0.9", features = ["lua54", "vendored"] }
 # Used at runtime to extract core.bnd (into a "core" folder) and enabled
 # mod .bnd files (into a temp folder) - both are just zip archives.

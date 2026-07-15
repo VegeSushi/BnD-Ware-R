@@ -7,7 +7,6 @@ use mlua::prelude::*;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use sdl2::event::Event;
-use sdl2::image::LoadTexture;
 use sdl2::keyboard::Scancode;
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -203,8 +202,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;
-    let _image_context = sdl2::image::init(sdl2::image::InitFlag::PNG)?;
-    let ttf_context = sdl2::ttf::init().map_err(|e| e.to_string())?;
 
     let window = video_subsystem
         .window("BnD-Ware Engine", 320, 240)
@@ -216,7 +213,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let texture_creator = canvas.texture_creator();
 
     let font_path = resolve_path(&vfs_roots, "rom:/font.ttf");
-    let font = ttf_context.load_font(&font_path, 16).ok();
+    let font: Option<fontdue::Font> = std::fs::read(&font_path)
+        .ok()
+        .and_then(|bytes| fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default()).ok());
 
     // Loading Screens
     draw_loading_screen(&mut canvas, &texture_creator, &font, 1)?;
@@ -240,7 +239,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for i in 0..=59 {
         let filename = format!("rom:/logo/logo_{:04}.sprite", i);
         let path = resolve_path(&vfs_roots, &filename);
-        if let Ok(texture) = texture_creator.load_texture(&path) {
+        if let Ok(texture) = load_texture_from_file(&texture_creator, &path) {
             canvas.clear();
             canvas.copy(&texture, None, None)?;
             canvas.present();
@@ -298,7 +297,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let bg_filename = format!("rom:/menu/menu_{:04}.sprite", menu_frame);
             let bg_path = resolve_path(&vfs_roots, &bg_filename);
 
-            if let Ok(texture) = texture_creator.load_texture(&bg_path) {
+            if let Ok(texture) = load_texture_from_file(&texture_creator, &bg_path) {
                 canvas.copy(&texture, None, None)?;
             }
 
@@ -386,7 +385,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         DrawCmd::DrawSprite(path, x, y) => {
                             let disk_path = resolve_path(&vfs_roots, &path);
-                            if let Ok(texture) = texture_creator.load_texture(&disk_path) {
+                            if let Ok(texture) = load_texture_from_file(&texture_creator, &disk_path) {
                                 let q = texture.query();
                                 let target = sdl2::rect::Rect::new(x, y, q.width as u32, q.height as u32);
                                 let _ = canvas.copy(&texture, None, Some(target));
@@ -411,7 +410,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 g_total_score += score;
 
                 let stars_path = resolve_path(&vfs_roots, "rom:/sprites/stars.sprite");
-                if let Ok(stars) = texture_creator.load_texture(&stars_path) {
+                if let Ok(stars) = load_texture_from_file(&texture_creator, &stars_path) {
                     canvas.copy(&stars, None, None)?;
                 }
 
@@ -424,7 +423,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Final Score Screen
         let stars_path = resolve_path(&vfs_roots, "rom:/sprites/stars.sprite");
-        if let Ok(stars) = texture_creator.load_texture(&stars_path) {
+        if let Ok(stars) = load_texture_from_file(&texture_creator, &stars_path) {
             canvas.copy(&stars, None, None)?;
         }
         let final_text = format!("Final Score: {}", g_total_score);
@@ -443,7 +442,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn draw_loading_screen(
     canvas: &mut sdl2::render::Canvas<sdl2::video::Window>,
     tc: &sdl2::render::TextureCreator<sdl2::video::WindowContext>,
-    font: &Option<sdl2::ttf::Font>,
+    font: &Option<fontdue::Font>,
     progress: i32,
 ) -> Result<(), Box<dyn std::error::Error>> {
     canvas.set_draw_color(sdl2::pixels::Color::BLACK);
@@ -462,16 +461,16 @@ fn show_about_screen(
     canvas: &mut sdl2::render::Canvas<sdl2::video::Window>,
     event_pump: &mut sdl2::EventPump,
     tc: &sdl2::render::TextureCreator<sdl2::video::WindowContext>,
-    font: &Option<sdl2::ttf::Font>,
+    font: &Option<fontdue::Font>,
     vfs_roots: &[PathBuf],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let stars_path = resolve_path(vfs_roots, "rom:/sprites/stars.sprite");
-    if let Ok(stars) = tc.load_texture(&stars_path) {
+    if let Ok(stars) = load_texture_from_file(tc, &stars_path) {
         canvas.copy(&stars, None, None)?;
     }
 
     let qr_path = resolve_path(vfs_roots, "rom:/sprites/qr.sprite");
-    if let Ok(qr) = tc.load_texture(&qr_path) {
+    if let Ok(qr) = load_texture_from_file(tc, &qr_path) {
         let q = qr.query();
         canvas.copy(&qr, None, Some(sdl2::rect::Rect::new(100, 45, q.width as u32, q.height as u32)))?;
     }
@@ -492,24 +491,105 @@ fn show_about_screen(
     }
 }
 
+/// Loads an image file from disk and decodes it in pure Rust (via the
+/// `image` crate) into an SDL2 texture, replacing sdl2::image::LoadTexture
+/// / SDL2_image so the whole build stays free of extra native libs.
+fn load_texture_from_file<'a>(
+    tc: &'a sdl2::render::TextureCreator<sdl2::video::WindowContext>,
+    path: &Path,
+) -> Result<sdl2::render::Texture<'a>, String> {
+    let img = image::open(path).map_err(|e| e.to_string())?.into_rgba8();
+    let (w, h) = img.dimensions();
+    if w == 0 || h == 0 {
+        return Err("image has zero width/height".to_string());
+    }
+
+    let mut texture = tc
+        .create_texture_static(sdl2::pixels::PixelFormatEnum::RGBA32, w, h)
+        .map_err(|e| e.to_string())?;
+    texture.set_blend_mode(sdl2::render::BlendMode::Blend);
+    texture
+        .update(None, &img.into_raw(), (w * 4) as usize)
+        .map_err(|e| e.to_string())?;
+    Ok(texture)
+}
+
+/// Renders text into a texture using pure-Rust glyph rasterization (via
+/// `fontdue`), replacing sdl2::ttf::Font::render(...).blended(...) /
+/// SDL2_ttf so the whole build stays free of extra native libs.
 fn draw_native_text(
     canvas: &mut sdl2::render::Canvas<sdl2::video::Window>,
     tc: &sdl2::render::TextureCreator<sdl2::video::WindowContext>,
-    font: &Option<sdl2::ttf::Font>,
+    font: &Option<fontdue::Font>,
     text: &str,
     x: i32,
     y: i32,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(f) = font {
-        for (i, line) in text.split('\n').enumerate() {
-            if let Ok(surface) = f.render(line).blended(sdl2::pixels::Color::WHITE) {
-                if let Ok(texture) = tc.create_texture_from_surface(&surface) {
-                    let target = sdl2::rect::Rect::new(x, y + (i as i32 * 20), surface.width(), surface.height());
-                    canvas.copy(&texture, None, Some(target))?;
+    const FONT_SIZE: f32 = 16.0;
+    const LINE_HEIGHT: i32 = 20;
+
+    let Some(f) = font else { return Ok(()) };
+
+    for (i, line) in text.split('\n').enumerate() {
+        if line.is_empty() {
+            continue;
+        }
+
+        // First pass: rasterize every glyph and work out the line's
+        // overall pixel width/height, plus where the baseline sits.
+        let mut glyphs = Vec::with_capacity(line.len());
+        let mut pen_x: i32 = 0;
+        let mut max_ascent: i32 = 0; // highest point any glyph reaches above the baseline
+        let mut min_descent: i32 = 0; // lowest point any glyph reaches below the baseline
+
+        for ch in line.chars() {
+            let (metrics, bitmap) = f.rasterize(ch, FONT_SIZE);
+            max_ascent = max_ascent.max(metrics.ymin + metrics.height as i32);
+            min_descent = min_descent.min(metrics.ymin);
+            glyphs.push((pen_x, metrics, bitmap));
+            pen_x += metrics.advance_width.round() as i32;
+        }
+
+        let width = pen_x.max(1) as u32;
+        let height = (max_ascent - min_descent).max(1) as u32;
+        let baseline = max_ascent;
+
+        // Second pass: blit each glyph's coverage bitmap into an RGBA
+        // buffer as white text with per-pixel alpha.
+        let mut buffer = vec![0u8; (width as usize) * (height as usize) * 4];
+        for (gx, metrics, bitmap) in &glyphs {
+            for gy in 0..metrics.height {
+                for gxi in 0..metrics.width {
+                    let coverage = bitmap[gy * metrics.width + gxi];
+                    if coverage == 0 {
+                        continue;
+                    }
+                    let px = gx + gxi as i32 + metrics.xmin;
+                    let py = baseline - metrics.height as i32 + gy as i32 - metrics.ymin;
+                    if px < 0 || py < 0 || px as u32 >= width || py as u32 >= height {
+                        continue;
+                    }
+                    let idx = ((py as u32 * width + px as u32) * 4) as usize;
+                    buffer[idx] = 255;
+                    buffer[idx + 1] = 255;
+                    buffer[idx + 2] = 255;
+                    buffer[idx + 3] = coverage;
                 }
             }
         }
+
+        let mut texture = tc
+            .create_texture_static(sdl2::pixels::PixelFormatEnum::RGBA32, width, height)
+            .map_err(|e| e.to_string())?;
+        texture.set_blend_mode(sdl2::render::BlendMode::Blend);
+        texture
+            .update(None, &buffer, (width * 4) as usize)
+            .map_err(|e| e.to_string())?;
+
+        let target = sdl2::rect::Rect::new(x, y + (i as i32 * LINE_HEIGHT), width, height);
+        canvas.copy(&texture, None, Some(target))?;
     }
+
     Ok(())
 }
 
