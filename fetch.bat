@@ -29,17 +29,7 @@ if errorlevel 1 (
 echo Cleaning up...
 rmdir /S /Q temp_bnd
 
-echo Compressing core package...
-if exist core.zip del /Q core.zip
-if exist core.bnd del /Q core.bnd
-powershell -NoProfile -Command "Compress-Archive -Path core\* -DestinationPath core.zip -Force"
-if errorlevel 1 (
-    echo ERROR: failed to compress core package.
-    exit /b 1
-)
-rename core.zip core.bnd
-
-echo Fetch and core.bnd generation complete!
+echo Done!
 exit /b 0
 
 :cleanup_fail
