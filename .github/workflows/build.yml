@@ -1,0 +1,106 @@
+name: Build BnD-Ware
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch: {}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-windows:
+    name: Windows (build.bat + installer)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      # SDL2 is built from source ("bundled" + "static-link"), which needs cmake.
+      # cmake is preinstalled on the windows-latest runner image, but make sure.
+      - name: Ensure cmake is available
+        run: cmake --version
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      # build.bat handles: fetch assets/minigames -> cargo build --release
+      # -> ISCC setup.iss. It clones VegeSushi/BnD-Ware itself for assets,
+      # so no extra checkout step is needed for that part.
+      - name: Run build.bat
+        shell: cmd
+        run: build.bat
+
+      - name: Upload game binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: bnd-ware-windows-binaries
+          path: |
+            target/release/bnd_game.exe
+            target/release/bnd_mod_manager.exe
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: bnd-ware-windows-installer
+          path: Output/BnDWare_Installer.exe
+
+  build-linux:
+    name: Linux (build.sh + AppImage)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      # System packages needed to build/run:
+      #  - cmake: builds bundled SDL2 from source
+      #  - libasound2-dev: SDL2 audio backend (ALSA)
+      #  - libx11-dev/libxext-dev/libxrandr-dev/libxcursor-dev/libxi-dev/
+      #    libxinerama-dev/libxkbcommon-dev/libwayland-dev: windowing (SDL2 + eframe/winit)
+      #  - libgl1-mesa-dev/libegl1-mesa-dev: OpenGL for eframe/egui rendering
+      #  - fuse: required to run AppImages (build itself doesn't need it, but
+      #    appimagetool benefits from it; we use --appimage-extract-and-run instead)
+      - name: Install system build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake build-essential pkg-config \
+            libasound2-dev \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
+            libxinerama-dev libxkbcommon-dev libwayland-dev \
+            libgl1-mesa-dev libegl1-mesa-dev
+
+      - name: Make build.sh executable
+        run: chmod +x build.sh fetch.sh
+
+      - name: Run build.sh
+        run: ./build.sh
+
+      - name: Upload game binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: bnd-ware-linux-binaries
+          path: |
+            target/release/bnd_game
+            target/release/bnd_mod_manager
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: bnd-ware-linux-appimage
+          path: Output/BnDWare-x86_64.AppImage
