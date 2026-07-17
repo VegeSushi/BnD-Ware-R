@@ -70,15 +70,39 @@ else
     echo "WARNING: ./core not found; AppImage will be missing game assets."
 fi
 
-# Icon: reuse the Windows .ico source asset if present, otherwise skip.
-if [ -f assets/game_icon.ico ]; then
-    if command -v convert >/dev/null 2>&1; then
-        convert assets/game_icon.ico -resize 256x256 "$APPDIR/bndware.png" || true
-    fi
+# Icon: appimagetool hard-requires bndware.png (or .svg/.xpm) to exist,
+# so we must always end up with a real image file here, never a stub.
+if [ -f assets/game_icon.ico ] && command -v convert >/dev/null 2>&1; then
+    convert assets/game_icon.ico -resize 256x256 "$APPDIR/bndware.png" || true
 fi
 if [ ! -f "$APPDIR/bndware.png" ]; then
-    # Fallback: create a tiny placeholder so appimagetool has an icon to embed.
-    printf 'placeholder' > "$APPDIR/bndware.png.missing"
+    echo "No usable game_icon.ico/ImageMagick found; generating a placeholder PNG icon..."
+    python3 - "$APPDIR/bndware.png" <<'PYEOF'
+import struct, zlib, sys
+
+out_path = sys.argv[1]
+size = 256
+# Solid dark-purple square as a stand-in icon; replace assets/game_icon.ico
+# with a proper icon later for a nicer AppImage.
+r, g, b = 60, 40, 90
+raw = bytearray()
+for _ in range(size):
+    raw.append(0)  # filter type: None
+    for _ in range(size):
+        raw += bytes((r, g, b, 255))
+
+def chunk(tag, data):
+    return (struct.pack(">I", len(data)) + tag + data +
+            struct.pack(">I", zlib.crc32(tag + data) & 0xffffffff))
+
+png = b"\x89PNG\r\n\x1a\n"
+png += chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 6, 0, 0, 0))
+png += chunk(b"IDAT", zlib.compress(bytes(raw), 9))
+png += chunk(b"IEND", b"")
+
+with open(out_path, "wb") as f:
+    f.write(png)
+PYEOF
 fi
 
 cat > "$APPDIR/bndware.desktop" <<'EOF'
