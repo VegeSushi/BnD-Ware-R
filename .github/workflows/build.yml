@@ -10,6 +10,11 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # sdl2-sys bundles SDL2's own CMakeLists.txt, which declares a
+  # cmake_minimum_required() below 3.5. Newer CMake (4.x, now on
+  # windows-latest/ubuntu-latest) refuses to configure such projects
+  # unless told to fall back to the old policy set.
+  CMAKE_POLICY_VERSION_MINIMUM: "3.5"
 
 jobs:
   build-windows:
@@ -104,3 +109,34 @@ jobs:
         with:
           name: bnd-ware-linux-appimage
           path: Output/BnDWare-x86_64.AppImage
+
+  release:
+    name: Publish GitHub Release
+    needs: [build-windows, build-linux]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      # Flatten + give each file a stable, unambiguous release name.
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          cp artifacts/bnd-ware-windows-installer/BnDWare_Installer.exe release/BnDWare_Installer.exe
+          cp artifacts/bnd-ware-windows-binaries/bnd_game.exe release/bnd_game-windows.exe
+          cp artifacts/bnd-ware-windows-binaries/bnd_mod_manager.exe release/bnd_mod_manager-windows.exe
+          cp artifacts/bnd-ware-linux-appimage/BnDWare-x86_64.AppImage release/BnDWare-x86_64.AppImage
+          cp artifacts/bnd-ware-linux-binaries/bnd_game release/bnd_game-linux
+          cp artifacts/bnd-ware-linux-binaries/bnd_mod_manager release/bnd_mod_manager-linux
+
+      - name: Create/Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+          draft: false
