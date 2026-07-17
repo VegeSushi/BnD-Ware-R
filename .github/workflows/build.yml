@@ -88,7 +88,8 @@ jobs:
             libasound2-dev \
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
             libxinerama-dev libxkbcommon-dev libwayland-dev \
-            libgl1-mesa-dev libegl1-mesa-dev
+            libgl1-mesa-dev libegl1-mesa-dev \
+            imagemagick
 
       - name: Make build.sh executable
         run: chmod +x build.sh fetch.sh
