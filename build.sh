@@ -120,7 +120,55 @@ cat > "$APPDIR/AppRun" <<'EOF'
 #!/usr/bin/env bash
 HERE="$(dirname "$(readlink -f "${0}")")"
 cd "${HERE}/usr/bin"
-exec ./bnd_game "$@"
+
+# Allow forcing a target directly, e.g. `./BnDWare.AppImage --modmanager`
+case "${1:-}" in
+    --modmanager|--mod-manager)
+        shift
+        exec ./bnd_mod_manager "$@"
+        ;;
+    --vanilla|--game)
+        shift
+        exec ./bnd_game "$@"
+        ;;
+esac
+
+# Otherwise ask the user what they want to run.
+choice=""
+if command -v zenity >/dev/null 2>&1; then
+    choice="$(zenity --list --title="BnD-Ware" --text="What would you like to launch?" \
+        --column="Option" "Play Vanilla" "Run Mod Manager" 2>/dev/null || true)"
+elif command -v kdialog >/dev/null 2>&1; then
+    sel="$(kdialog --title "BnD-Ware" --menu "What would you like to launch?" \
+        "vanilla" "Play Vanilla" "modmanager" "Run Mod Manager" 2>/dev/null || true)"
+    case "$sel" in
+        vanilla) choice="Play Vanilla" ;;
+        modmanager) choice="Run Mod Manager" ;;
+    esac
+fi
+
+if [ -z "$choice" ]; then
+    # No GUI dialog tool available (or it was cancelled): fall back to terminal prompt.
+    echo "==============================================="
+    echo " BnD-Ware"
+    echo "==============================================="
+    echo "  1) Play Vanilla"
+    echo "  2) Run Mod Manager"
+    read -r -p "Select an option [1/2]: " answer
+    case "$answer" in
+        2) choice="Run Mod Manager" ;;
+        *) choice="Play Vanilla" ;;
+    esac
+fi
+
+case "$choice" in
+    "Run Mod Manager")
+        exec ./bnd_mod_manager
+        ;;
+    *)
+        exec ./bnd_game
+        ;;
+esac
 EOF
 chmod +x "$APPDIR/AppRun"
 
